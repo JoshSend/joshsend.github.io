@@ -1,12 +1,13 @@
+r · CSS
 /*
   protostar.css - styles for the animated protostar background (home page only).
   Load after main_style.css.
 */
-
+ 
 /* Lets body#home's background (the HL Tau image) sit underneath the canvas
    so it can act as the fallback. Remove if you ever style html's background. */
 html { background: none; }
-
+ 
 #protostar-bg {
     position: fixed;
     inset: 0;
@@ -17,18 +18,18 @@ html { background: none; }
     transition: opacity 3s ease;
 }
 #protostar-bg.faded { opacity: 0; }
-
+ 
 /* During the intro, the animation has the stage; caption and scroll hint fade in after. */
 #HL-Tau-Caption,
 .scroll-hint { transition: opacity 1.5s ease, visibility 1.5s; }
 body.protostar-intro #HL-Tau-Caption,
 body.protostar-intro .scroll-hint { opacity: 0; }
-
+ 
 /* Caption: show the one that matches what's on screen */
 #HL-Tau-Caption .caption-sim { display: none; }
 body[data-hero="sim"] #HL-Tau-Caption .caption-sim { display: block; }
 body[data-hero="sim"] #HL-Tau-Caption .caption-image { display: none; }
-
+ 
 /* Skip / Replay button: sits on the first screen and scrolls away with it */
 #protostar-ctrl {
     position: absolute;
@@ -46,3 +47,66 @@ body[data-hero="sim"] #HL-Tau-Caption .caption-image { display: none; }
     backdrop-filter: blur(4px);
 }
 #protostar-ctrl:hover { color: #3399ff; border-color: #3399ff; }
+ 
+/* Name + quick links on the first screen */
+.intro-title {
+    position: absolute;
+    top: 0;
+    left: 6vw;
+    right: 6vw;
+    height: 100dvh;
+    box-sizing: border-box;
+    padding-bottom: 16vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    z-index: 2;
+    pointer-events: none;
+    color: #ffffff;
+}
+.intro-title h1 {
+    margin: 0 0 0.3em;
+    font-weight: normal;
+    font-size: clamp(2.2rem, 5.5vw, 4.6rem);
+    letter-spacing: 0.02em;
+    text-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+}
+.intro-title p {
+    margin: 0 0 1.5em;
+    font-size: clamp(0.8rem, 1.2vw, 1rem);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    opacity: 0.8;
+    text-shadow: 0 0 20px rgba(0, 0, 0, 0.9);
+}
+.intro-title .intro-links { display: flex; flex-wrap: wrap; gap: 0.6em 2em; pointer-events: auto; }
+.intro-title .intro-links a {
+    color: #ffffff;
+    text-decoration: none;
+    font-size: clamp(0.95rem, 1.3vw, 1.15rem);
+    letter-spacing: 0.05em;
+    padding-bottom: 3px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+}
+.intro-title .intro-links a:hover { color: #3399ff; border-color: #3399ff; }
+ 
+/* Staggered fade-in: name, then subtitle, then links */
+.intro-title h1,
+.intro-title p,
+.intro-title .intro-links { transition: opacity 1.8s ease, transform 1.8s ease; }
+.intro-title p   { transition-delay: 0.5s; }
+.intro-title .intro-links { transition-delay: 1s; }
+body.protostar-intro .intro-title h1,
+body.protostar-intro .intro-title p,
+body.protostar-intro .intro-title .intro-links {
+    opacity: 0;
+    transform: translateY(14px);
+    transition-delay: 0s;
+    transition-duration: 0s;
+}
+body.protostar-intro .intro-title .intro-links { pointer-events: none; }
+ 
+/* Phones: leave room for the caption at the bottom */
+@media (max-width: 700px) {
+    .intro-title { padding-bottom: 30vh; }
+}
