@@ -13,6 +13,7 @@ Author: Joshua Sendgikoski
 
     <title>Home - Joshua Sendgikoski</title>
     <link href="/main_style.css" rel="stylesheet">
+    <link href="/protostar.css" rel="stylesheet">
     <link rel="icon" type="image/svg+xml" href="./logo.svg">
 </head>
 
@@ -54,7 +55,8 @@ Author: Joshua Sendgikoski
 
     <!--%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%-->
     <div id="HL-Tau-Caption">
-        <h5>The protoplanetary disk around the T-Tauri star HL Tau,
+        <!-- Shown when the HL Tau image is the background (fallback / fadeToImage) -->
+        <h5 class="caption-image">The protoplanetary disk around the T-Tauri star HL Tau,
             <br>captured by the Atacama Large Millimeter/submillimeter Array (ALMA).
             <br><a href="https://www.eso.org/public/images/eso1436a/" target="_blank"> Learn More</a></h5>
     </div>
@@ -119,6 +121,9 @@ Author: Joshua Sendgikoski
             </a>
         </div>
     </section>
+
+    <!-- Animated protostar background (see protostar.js / protostar.css) -->
+    <script src="/protostar.js" defer></script>
 
 </body>
 
