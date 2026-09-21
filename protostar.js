@@ -4,15 +4,18 @@
   settles into a Keplerian disk that keeps rotating behind the page content.
 
   Falls back to the HL Tau background image in main_style.css when WebGL2 is
-  unavailable.
-
-  I have no idea what I'm doing - Joshua
+  unavailable. For testing: add ?t=4&freeze to the URL to freeze on a moment.
+  Performance: capped frame rate, a fixed render-resolution budget, and automatic
+  quality reduction on slow machines (see CONFIG).
 */
 (() => {
 const CONFIG = {
   fadeToImage: false,         // true = after the intro, crossfade to the HL Tau ALMA image
   fadeAt: 11,                 // seconds (only used when fadeToImage is true)
-  introOncePerSession: true   // coming back to Home in the same tab skips to the settled disk
+  introOncePerSession: true,  // coming back to Home in the same tab skips to the settled disk
+  maxFps: 30,                 // frame cap once the disk has settled (the intro runs at up to 60)
+  scrolledFps: 20,            // frame cap once the reader has scrolled past the first screen
+  maxPixels: 1.2e6            // render-resolution budget (~1460x820); the glow hides the upscaling
 };
 const TJ = 2.0, SKIP_TO = 10.5, TEXT_AT = 6.5;
 
@@ -20,15 +23,18 @@ const body = document.body;
 const canvas = document.createElement('canvas');
 canvas.id = 'protostar-bg'; canvas.setAttribute('aria-hidden', 'true');
 body.prepend(canvas);
-const gl = canvas.getContext('webgl2', {antialias:false, alpha:false, powerPreference:'high-performance'});
+const gl = canvas.getContext('webgl2', {antialias:false, alpha:false, powerPreference:'low-power'});
 if (!gl) { canvas.remove(); return; }            // HL Tau image stays as the background
 
 const qs = new URLSearchParams(location.search);
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const small = Math.min(innerWidth, innerHeight) < 700;
 const Q = small ? 0.45 : 1.0;                    // particle budget scale
-const N_DISK = Math.round(150000*Q), N_BURST = Math.round(14000*Q),
-      N_JET = Math.round(26000*Q),   N_STARS = Math.round(2500*Q);
+const N_DISK = Math.round(60000*Q), N_BURST = Math.round(7000*Q),
+      N_JET = Math.round(11000*Q),   N_STARS = Math.round(1500*Q);
+// Fewer, slightly larger particles; brightness is rescaled so the look matches the original.
+const SIZE_K = [1.3, 1.15, 1.2];
+const GAIN_K = [150000/N_DISK, 14000/N_BURST, 26000/N_JET].map((g,i) => g/(SIZE_K[i]*SIZE_K[i]));
 
 let seen = false;
 try {
@@ -50,18 +56,11 @@ void main(){ vUv=aPos*.5+.5; gl_Position=vec4(aPos,0.,1.); }`;
 const GLOW_FS = `#version 300 es
 precision highp float;
 in vec2 vUv; out vec4 o;
-uniform vec2 uRes; uniform float uTime, uStar, uFlash, uNeb, uRoll;
-float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
-float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
-  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
-float fbm(vec2 p){ float v=0., a=.5; for(int i=0;i<5;i++){ v+=a*noise(p); p=p*2.03+vec2(1.7,9.2); a*=.5; } return v; }
+uniform vec2 uRes; uniform float uStar, uFlash, uNeb, uRoll; uniform sampler2D uNebTex;
 void main(){
   vec2 p=(gl_FragCoord.xy-.5*uRes)/uRes.y;
   float q2=dot(p,p);
-  // nebula
-  vec2 np=p+vec2(uTime*.004,0.);
-  float n1=fbm(np*2.2+3.), n2=fbm(np*4.5-7.);
-  vec3 col = uNeb*( vec3(.10,.035,.16)*pow(n1,3.)*1.2 + vec3(.02,.05,.10)*pow(n2,2.)*.8 );
+  vec3 col = uNeb*texture(uNebTex,vUv).rgb;                  // pre-baked nebula
   // reflection glow of the envelope
   col += uStar*vec3(.45,.28,.22)*.05*exp(-sqrt(q2)*5.);
   // star core + halo
@@ -76,13 +75,28 @@ void main(){
   o=vec4(col,1.);
 }`;
 
+// Nebula noise: rendered once per resize into a small texture
+const NEB_FS = `#version 300 es
+precision highp float;
+in vec2 vUv; out vec4 o;
+uniform vec2 uRes;
+float hash(vec2 p){ p=fract(p*vec2(123.34,456.21)); p+=dot(p,p+45.32); return fract(p.x*p.y); }
+float noise(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+float fbm(vec2 p){ float v=0., a=.5; for(int i=0;i<5;i++){ v+=a*noise(p); p=p*2.03+vec2(1.7,9.2); a*=.5; } return v; }
+void main(){
+  vec2 p=(gl_FragCoord.xy-.5*uRes)/uRes.y;
+  float n1=fbm(p*2.2+3.), n2=fbm(p*4.5-7.);
+  o=vec4(vec3(.10,.035,.16)*pow(n1,3.)*1.2 + vec3(.02,.05,.10)*pow(n2,2.)*.8, 1.);
+}`;
+
 // One VS computes every particle's position analytically from (seed, time).
 const PART_VS = `#version 300 es
 precision highp float;
 layout(location=0) in vec4 aSeed;
 layout(location=1) in float aType;   // 0 disk/envelope, 1 jet burst, 2 steady jet, 3 background star
 uniform mat4 uProj, uView;
-uniform float uTime, uScale, uPx;
+uniform float uTime, uScale, uPx; uniform vec3 uGain, uSizeK;
 out vec3 vCol; out float vA;
 const float TJ=${TJ.toFixed(2)}, TD=2.3, RIN=.16, ROUT=4.2, TAU=6.2831853;
 float h(float x){ return fract(sin(x*12.9898+78.233)*43758.5453); }
@@ -158,11 +172,15 @@ void main(){
     size=1.2+2.*pow(s.w,8.); fixedPx=true;
   }
 
+  if(aType<.5){ a*=uGain.x; size*=uSizeK.x; }
+  else if(aType<1.5){ a*=uGain.y; size*=uSizeK.y; }
+  else if(aType<2.5){ a*=uGain.z; size*=uSizeK.z; }
+
   vec4 mv=uView*vec4(pos,1.);
   if(mv.z>-.1){ gl_Position=vec4(2,2,2,1); gl_PointSize=0.; vA=0.; vCol=vec3(0); return; }
   gl_Position=uProj*mv;
   float px = fixedPx ? size*uPx : size*uScale/(-mv.z);
-  float mn=1.5*uPx;
+  float mn=max(1.5*uPx,1.);
   if(px<mn){ a*=(px/mn)*(px/mn); px=mn; }                    // keep energy for sub-pixel points
   gl_PointSize=min(px,64.);
   vCol=col; vA=a;
@@ -215,7 +233,7 @@ function program(vs, fs){
   return {p, u:n=>(n in cache?cache[n]:(cache[n]=gl.getUniformLocation(p,n)))};
 }
 const P = {
-  glow: program(QUAD_VS,GLOW_FS), part: program(PART_VS,PART_FS),
+  glow: program(QUAD_VS,GLOW_FS), neb: program(QUAD_VS,NEB_FS), part: program(PART_VS,PART_FS),
   bright: program(QUAD_VS,BRIGHT_FS), blur: program(QUAD_VS,BLUR_FS), comp: program(QUAD_VS,COMP_FS)
 };
 
@@ -248,17 +266,20 @@ function target(w,h){
   gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tex,0);
   return {tex,fb,w,h,free(){gl.deleteTexture(tex);gl.deleteFramebuffer(fb);}};
 }
-let T={}, W=0, H=0, dpr=1;
+let T={}, W=0, H=0, dpr=1, quality=1;          // quality drops automatically on slow machines
 function resize(){
-  dpr=Math.min(devicePixelRatio||1, small?1.5:2);
-  const w=Math.round(innerWidth*dpr), h=Math.round(innerHeight*dpr);
+  const cw=innerWidth, ch=innerHeight;
+  dpr=Math.min(devicePixelRatio||1, 2, Math.sqrt(CONFIG.maxPixels*quality/(cw*ch)));
+  const w=Math.max(2,Math.round(cw*dpr)), h=Math.max(2,Math.round(ch*dpr));
   if(w===W&&h===H) return;
   W=canvas.width=w; H=canvas.height=h;
   Object.values(T).forEach(t=>t.free());
   const w2=w>>1,h2=h>>1,w4=w>>2,h4=h>>2;
-  T={scene:target(w,h), a1:target(w2,h2), b1:target(w2,h2), a2:target(w4,h4), b2:target(w4,h4)};
+  T={scene:target(w,h), a1:target(w2,h2), b1:target(w2,h2), a2:target(w4,h4), b2:target(w4,h4), neb:target(w4,h4)};
+  pass(P.neb,T.neb); gl.uniform2f(P.neb.u('uRes'),w4,h4); gl.drawArrays(gl.TRIANGLES,0,3);
 }
-addEventListener('resize',resize); resize();
+let resizeTimer=0;
+addEventListener('resize',()=>{ clearTimeout(resizeTimer); resizeTimer=setTimeout(resize,200); });
 
 /* ------------------------------ math ------------------------------ */
 const FOV=35*Math.PI/180;
@@ -285,6 +306,7 @@ function starI(t){
 function pass(prog, dst){ gl.bindFramebuffer(gl.FRAMEBUFFER,dst?dst.fb:null);
   gl.viewport(0,0,dst?dst.w:W,dst?dst.h:H); gl.useProgram(prog.p); gl.bindVertexArray(quadVao); }
 function tex(unit,t){ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t.tex); }
+resize();
 function blur(src,tmp){
   for(let i=0;i<2;i++){
     pass(P.blur,tmp); tex(0,src); gl.uniform1i(P.blur.u('uTex'),0); gl.uniform2f(P.blur.u('uDir'),(1+i)/src.w,0); gl.drawArrays(gl.TRIANGLES,0,3);
@@ -298,9 +320,9 @@ body.dataset.hero = 'sim';
 body.appendChild(ctrl);
 
 let t0 = performance.now(), offset = qs.has('t') ? +qs.get('t') : (skipIntro ? SKIP_TO : 0);
-const freeze = qs.has('freeze'), speed = reduced ? 0.35 : 1;
+const freeze = qs.has('freeze'), bench = qs.has('bench'), speed = reduced ? 0.35 : 1;
 const now = () => freeze ? offset : (performance.now()-t0)/1000*speed + offset;
-let mx=0, my=0, cmx=0, cmy=0, raf=0, lastDraw=0, faded=false, introDone=true;
+let mx=0, my=0, cmx=0, cmy=0, raf=0, lastDraw=-1e9, slowAvg=0, drawn=0, faded=false, introDone=true;
 addEventListener('pointermove', e => { mx=e.clientX/innerWidth*2-1; my=e.clientY/innerHeight*2-1; });
 
 function startIntro(){ introDone=false; body.classList.add('protostar-intro'); ctrl.textContent='Skip intro'; }
@@ -324,9 +346,16 @@ function frame(ts){
   if (CONFIG.fadeToImage && !faded && t>=CONFIG.fadeAt){ faded=true; canvas.classList.add('faded'); body.dataset.hero='image'; }
   if (faded && t>=CONFIG.fadeAt+3.5) return;                    // fully faded: stop rendering
   // once the reader is past the first screen (content mostly covers it), draw at ~30 fps
-  if (!freeze && scrollY>innerHeight*1.2 && ts-lastDraw<30){ raf=requestAnimationFrame(frame); return; }
-  lastDraw=ts;
-  draw(t);
+  // frame cap: smooth during the intro, gentler afterwards, gentler still when scrolled past
+  const fps = bench ? 1000 : scrollY>innerHeight*1.2 ? CONFIG.scrolledFps : t<SKIP_TO ? 60 : CONFIG.maxFps;
+  if (!freeze && ts-lastDraw < 1000/fps-4){ raf=requestAnimationFrame(frame); return; }
+  const gap=ts-lastDraw; lastDraw=ts;
+  // adaptive quality: if frames keep arriving late, render at a lower resolution
+  if (!bench && !freeze && gap<500){
+    slowAvg = slowAvg*.95 + (gap > 1.5*1000/fps ? 1 : 0)*.05;
+    if (++drawn>60 && slowAvg>.5 && quality>.3){ quality*=.7; slowAvg=0; drawn=0; resize(); }
+  }
+  draw(t); window.__draws=(window.__draws||0)+1;
   if (!freeze) raf=requestAnimationFrame(frame); else window.__rendered=true;
 }
 
@@ -347,7 +376,7 @@ function draw(t){
   gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);
   gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE);
   pass(P.glow,T.scene);
-  gl.uniform2f(P.glow.u('uRes'),W,H); gl.uniform1f(P.glow.u('uTime'),t);
+  tex(0,T.neb); gl.uniform1i(P.glow.u('uNebTex'),0); gl.uniform2f(P.glow.u('uRes'),W,H);
   gl.uniform1f(P.glow.u('uStar'),star); gl.uniform1f(P.glow.u('uFlash'),flash);
   gl.uniform1f(P.glow.u('uNeb'),sstep(.5,4,t)*.8); gl.uniform1f(P.glow.u('uRoll'),roll);
   gl.drawArrays(gl.TRIANGLES,0,3);
@@ -355,6 +384,7 @@ function draw(t){
   gl.uniformMatrix4fv(P.part.u('uProj'),false,proj); gl.uniformMatrix4fv(P.part.u('uView'),false,view);
   gl.uniform1f(P.part.u('uTime'),t); gl.uniform1f(P.part.u('uPx'),dpr);
   gl.uniform1f(P.part.u('uScale'),(H/2)/Math.tan(FOV/2));
+  gl.uniform3fv(P.part.u('uGain'),GAIN_K); gl.uniform3fv(P.part.u('uSizeK'),SIZE_K);
   gl.drawArrays(gl.POINTS,0,N);
   gl.disable(gl.BLEND);
 
