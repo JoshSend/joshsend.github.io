@@ -7,6 +7,12 @@
   unavailable. For testing: add ?t=4&freeze to the URL to freeze on a moment.
   Performance: capped frame rate, a fixed render-resolution budget, and automatic
   quality reduction on slow machines (see CONFIG).
+
+  Joshua Note:
+  This simulation was originally written in C++, however after seeing it I wanted to include it on my website!
+  However, I am a creature of the backend and had little interest (at the time) in learning js, so this is the
+  ai translated version of my C++ sim to javascript.
+  It's very pretty, but it's not the original C++.
 */
 (() => {
 const CONFIG = {
